@@ -360,11 +360,19 @@ func (s *MCPServer) AddResource(
 		s.capabilities.resources = &resourceCapabilities{}
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.resources[resource.URI] = resourceEntry{
 		resource: resource,
 		handler:  handler,
 	}
+	s.mu.Unlock()
+
+	// Send notification to all initialized sessions
+	s.sendNotificationToAllClients("notifications/resources/list_changed", map[string]interface{}{
+		"uri":         resource.URI,
+		"name":        resource.Name,
+		"description": resource.Description,
+		"mimeType":    resource.MIMEType,
+	})
 }
 
 // AddResourceTemplate registers a new resource template and its handler

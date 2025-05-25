@@ -23,6 +23,7 @@ type StdioMCPClient struct {
 	cmd           *exec.Cmd
 	stdin         io.WriteCloser
 	stdout        *bufio.Reader
+	stderr        *bufio.Reader
 	requestID     atomic.Int64
 	responses     map[int64]chan RPCResponse
 	mu            sync.RWMutex
@@ -58,10 +59,16 @@ func NewStdioMCPClient(
 		return nil, fmt.Errorf("failed to create stdout pipe: %w", err)
 	}
 
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create stderr pipe: %w", err)
+	}
+
 	client := &StdioMCPClient{
 		cmd:       cmd,
 		stdin:     stdin,
 		stdout:    bufio.NewReader(stdout),
+		stderr:    bufio.NewReader(stderr),
 		responses: make(map[int64]chan RPCResponse),
 		done:      make(chan struct{}),
 	}
@@ -69,6 +76,25 @@ func NewStdioMCPClient(
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("failed to start command: %w", err)
 	}
+
+	// Start reading stderr in a goroutine
+	go func() {
+		for {
+			select {
+			case <-client.done:
+				return
+			default:
+				line, err := client.stderr.ReadString('\n')
+				if err != nil {
+					if err != io.EOF {
+						fmt.Printf("Error reading stderr: %v\n", err)
+					}
+					return
+				}
+				fmt.Printf("Server error: %s", line)
+			}
+		}
+	}()
 
 	// Start reading responses in a goroutine and wait for it to be ready
 	ready := make(chan struct{})
@@ -141,7 +167,8 @@ func (c *StdioMCPClient) readResponses() {
 				}
 				c.notifyMu.RLock()
 				for _, handler := range c.notifications {
-					handler(notification)
+					// "go" prevents deadlock if the user uses the client in the handler
+					go handler(notification)
 				}
 				c.notifyMu.RUnlock()
 				continue
