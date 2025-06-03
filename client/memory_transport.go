@@ -71,7 +71,7 @@ func NewMemoryTransport(srv interface{}) (*MemoryTransport, error) {
 	transport.session = session
 
 	// Register session with server
-	if err := mcpServer.RegisterSession(session); err != nil {
+	if err := mcpServer.RegisterSession(ctx, session); err != nil {
 		cancel()
 		return nil, err
 	}

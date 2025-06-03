@@ -15,6 +15,12 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
+// RPCResponse represents a JSON-RPC response
+type RPCResponse struct {
+	Error    *string          `json:"error,omitempty"`
+	Response *json.RawMessage `json:"result,omitempty"`
+}
+
 // StdioTransport implements the Transport interface using stdio communication.
 // It launches a subprocess and communicates with it via standard input/output streams
 // using JSON-RPC messages.

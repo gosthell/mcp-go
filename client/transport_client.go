@@ -242,6 +242,38 @@ func (c *TransportMCPClient) Complete(
 	return &result, nil
 }
 
+// ListResourcesByPage manually list resources by page
+func (c *TransportMCPClient) ListResourcesByPage(
+	ctx context.Context,
+	request mcp.ListResourcesRequest,
+) (*mcp.ListResourcesResult, error) {
+	return c.ListResources(ctx, request)
+}
+
+// ListResourceTemplatesByPage manually list resource templates by page
+func (c *TransportMCPClient) ListResourceTemplatesByPage(
+	ctx context.Context,
+	request mcp.ListResourceTemplatesRequest,
+) (*mcp.ListResourceTemplatesResult, error) {
+	return c.ListResourceTemplates(ctx, request)
+}
+
+// ListPromptsByPage manually list prompts by page
+func (c *TransportMCPClient) ListPromptsByPage(
+	ctx context.Context,
+	request mcp.ListPromptsRequest,
+) (*mcp.ListPromptsResult, error) {
+	return c.ListPrompts(ctx, request)
+}
+
+// ListToolsByPage manually list tools by page
+func (c *TransportMCPClient) ListToolsByPage(
+	ctx context.Context,
+	request mcp.ListToolsRequest,
+) (*mcp.ListToolsResult, error) {
+	return c.ListTools(ctx, request)
+}
+
 // Close client connection and cleanup resources
 func (c *TransportMCPClient) Close() error {
 	return c.transport.Close()
