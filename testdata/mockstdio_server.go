@@ -4,20 +4,23 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
+
+	"github.com/mark3labs/mcp-go/mcp"
 )
 
 type JSONRPCRequest struct {
 	JSONRPC string          `json:"jsonrpc"`
-	ID      int64           `json:"id"`
+	ID      *mcp.RequestId  `json:"id,omitempty"`
 	Method  string          `json:"method"`
 	Params  json.RawMessage `json:"params"`
 }
 
 type JSONRPCResponse struct {
-	JSONRPC string      `json:"jsonrpc"`
-	ID      int64       `json:"id"`
-	Result  interface{} `json:"result,omitempty"`
+	JSONRPC string         `json:"jsonrpc"`
+	ID      *mcp.RequestId `json:"id,omitempty"`
+	Result  any            `json:"result,omitempty"`
 	Error   *struct {
 		Code    int    `json:"code"`
 		Message string `json:"message"`
@@ -25,6 +28,8 @@ type JSONRPCResponse struct {
 }
 
 func main() {
+	logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{}))
+	logger.Info("launch successful")
 	scanner := bufio.NewScanner(os.Stdin)
 	for scanner.Scan() {
 		var request JSONRPCRequest
@@ -46,21 +51,21 @@ func handleRequest(request JSONRPCRequest) JSONRPCResponse {
 
 	switch request.Method {
 	case "initialize":
-		response.Result = map[string]interface{}{
+		response.Result = map[string]any{
 			"protocolVersion": "1.0",
-			"serverInfo": map[string]interface{}{
+			"serverInfo": map[string]any{
 				"name":    "mock-server",
 				"version": "1.0.0",
 			},
-			"capabilities": map[string]interface{}{
-				"prompts": map[string]interface{}{
+			"capabilities": map[string]any{
+				"prompts": map[string]any{
 					"listChanged": true,
 				},
-				"resources": map[string]interface{}{
+				"resources": map[string]any{
 					"listChanged": true,
 					"subscribe":   true,
 				},
-				"tools": map[string]interface{}{
+				"tools": map[string]any{
 					"listChanged": true,
 				},
 			},
@@ -68,8 +73,8 @@ func handleRequest(request JSONRPCRequest) JSONRPCResponse {
 	case "ping":
 		response.Result = struct{}{}
 	case "resources/list":
-		response.Result = map[string]interface{}{
-			"resources": []map[string]interface{}{
+		response.Result = map[string]any{
+			"resources": []map[string]any{
 				{
 					"name": "test-resource",
 					"uri":  "test://resource",
@@ -77,8 +82,8 @@ func handleRequest(request JSONRPCRequest) JSONRPCResponse {
 			},
 		}
 	case "resources/read":
-		response.Result = map[string]interface{}{
-			"contents": []map[string]interface{}{
+		response.Result = map[string]any{
+			"contents": []map[string]any{
 				{
 					"text": "test content",
 					"uri":  "test://resource",
@@ -88,19 +93,19 @@ func handleRequest(request JSONRPCRequest) JSONRPCResponse {
 	case "resources/subscribe", "resources/unsubscribe":
 		response.Result = struct{}{}
 	case "prompts/list":
-		response.Result = map[string]interface{}{
-			"prompts": []map[string]interface{}{
+		response.Result = map[string]any{
+			"prompts": []map[string]any{
 				{
 					"name": "test-prompt",
 				},
 			},
 		}
 	case "prompts/get":
-		response.Result = map[string]interface{}{
-			"messages": []map[string]interface{}{
+		response.Result = map[string]any{
+			"messages": []map[string]any{
 				{
 					"role": "assistant",
-					"content": map[string]interface{}{
+					"content": map[string]any{
 						"type": "text",
 						"text": "test message",
 					},
@@ -108,19 +113,19 @@ func handleRequest(request JSONRPCRequest) JSONRPCResponse {
 			},
 		}
 	case "tools/list":
-		response.Result = map[string]interface{}{
-			"tools": []map[string]interface{}{
+		response.Result = map[string]any{
+			"tools": []map[string]any{
 				{
 					"name": "test-tool",
-					"inputSchema": map[string]interface{}{
+					"inputSchema": map[string]any{
 						"type": "object",
 					},
 				},
 			},
 		}
 	case "tools/call":
-		response.Result = map[string]interface{}{
-			"content": []map[string]interface{}{
+		response.Result = map[string]any{
+			"content": []map[string]any{
 				{
 					"type": "text",
 					"text": "tool result",
@@ -130,10 +135,34 @@ func handleRequest(request JSONRPCRequest) JSONRPCResponse {
 	case "logging/setLevel":
 		response.Result = struct{}{}
 	case "completion/complete":
-		response.Result = map[string]interface{}{
-			"completion": map[string]interface{}{
+		response.Result = map[string]any{
+			"completion": map[string]any{
 				"values": []string{"test completion"},
 			},
+		}
+
+	// Debug methods for testing transport.
+	case "debug/echo":
+		response.Result = request
+	case "debug/echo_notification":
+		response.Result = request
+
+		// send notification to client
+		responseBytes, _ := json.Marshal(map[string]any{
+			"jsonrpc": "2.0",
+			"method":  "debug/test",
+			"params":  request,
+		})
+		fmt.Fprintf(os.Stdout, "%s\n", responseBytes)
+
+	case "debug/echo_error_string":
+		all, _ := json.Marshal(request)
+		response.Error = &struct {
+			Code    int    `json:"code"`
+			Message string `json:"message"`
+		}{
+			Code:    -32601,
+			Message: string(all),
 		}
 	default:
 		response.Error = &struct {

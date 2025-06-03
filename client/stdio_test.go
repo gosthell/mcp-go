@@ -2,10 +2,13 @@ package client
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
-	"path/filepath"
+	"runtime"
+	"sync"
 	"testing"
 	"time"
 
@@ -16,21 +19,41 @@ func compileTestServer(outputPath string) error {
 	cmd := exec.Command(
 		"go",
 		"build",
+		"-buildmode=pie",
 		"-o",
 		outputPath,
 		"../testdata/mockstdio_server.go",
 	)
+	tmpCache, _ := os.MkdirTemp("", "gocache")
+	cmd.Env = append(os.Environ(), "GOCACHE="+tmpCache)
+
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("compilation failed: %v\nOutput: %s", err, output)
+	}
+	// Verify the binary was actually created
+	if _, err := os.Stat(outputPath); os.IsNotExist(err) {
+		return fmt.Errorf("mock server binary not found at %s after compilation", outputPath)
 	}
 	return nil
 }
 
 func TestStdioMCPClient(t *testing.T) {
-	// Compile mock server
-	mockServerPath := filepath.Join(os.TempDir(), "mockstdio_server")
-	if err := compileTestServer(mockServerPath); err != nil {
-		t.Fatalf("Failed to compile mock server: %v", err)
+	// Create a temporary file for the mock server
+	tempFile, err := os.CreateTemp("", "mockstdio_server")
+	if err != nil {
+		t.Fatalf("Failed to create temp file: %v", err)
+	}
+	tempFile.Close()
+	mockServerPath := tempFile.Name()
+
+	// Add .exe suffix on Windows
+	if runtime.GOOS == "windows" {
+		os.Remove(mockServerPath) // Remove the empty file first
+		mockServerPath += ".exe"
+	}
+
+	if compileErr := compileTestServer(mockServerPath); compileErr != nil {
+		t.Fatalf("Failed to compile mock server: %v", compileErr)
 	}
 	defer os.Remove(mockServerPath)
 
@@ -38,7 +61,29 @@ func TestStdioMCPClient(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
-	defer client.Close()
+	var logRecords []map[string]any
+	var logRecordsMu sync.RWMutex
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+
+		stderr, ok := GetStderr(client)
+		if !ok {
+			return
+		}
+
+		dec := json.NewDecoder(stderr)
+		for {
+			var record map[string]any
+			if err := dec.Decode(&record); err != nil {
+				return
+			}
+			logRecordsMu.Lock()
+			logRecords = append(logRecords, record)
+			logRecordsMu.Unlock()
+		}
+	}()
 
 	t.Run("Initialize", func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -187,7 +232,7 @@ func TestStdioMCPClient(t *testing.T) {
 
 		request := mcp.CallToolRequest{}
 		request.Params.Name = "test-tool"
-		request.Params.Arguments = map[string]interface{}{
+		request.Params.Arguments = map[string]any{
 			"param1": "value1",
 		}
 
@@ -236,6 +281,27 @@ func TestStdioMCPClient(t *testing.T) {
 				"Expected 1 completion value, got %d",
 				len(result.Completion.Values),
 			)
+		}
+	})
+
+	client.Close()
+	wg.Wait()
+
+	t.Run("CheckLogs", func(t *testing.T) {
+		logRecordsMu.RLock()
+		defer logRecordsMu.RUnlock()
+
+		if len(logRecords) != 1 {
+			t.Errorf("Expected 1 log record, got %d", len(logRecords))
+			return
+		}
+
+		msg, ok := logRecords[0][slog.MessageKey].(string)
+		if !ok {
+			t.Errorf("Expected log record to have message key")
+		}
+		if msg != "launch successful" {
+			t.Errorf("Expected log message 'launch successful', got '%s'", msg)
 		}
 	})
 }

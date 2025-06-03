@@ -1,10 +1,10 @@
 <!-- omit in toc -->
-# MCP Go 🚀
+<div align="center">
+<img src="./logo.png" alt="MCP Go Logo">
+
 [![Build](https://github.com/mark3labs/mcp-go/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/mark3labs/mcp-go/actions/workflows/ci.yml)
 [![Go Report Card](https://goreportcard.com/badge/github.com/mark3labs/mcp-go?cache)](https://goreportcard.com/report/github.com/mark3labs/mcp-go)
 [![GoDoc](https://pkg.go.dev/badge/github.com/mark3labs/mcp-go.svg)](https://pkg.go.dev/github.com/mark3labs/mcp-go)
-
-<div align="center">
 
 <strong>A Go implementation of the Model Context Protocol (MCP), enabling seamless integration between LLM applications and external data sources and tools.</strong>
 
@@ -12,7 +12,12 @@
 
 [![Tutorial](http://img.youtube.com/vi/qoaeYMrXJH0/0.jpg)](http://www.youtube.com/watch?v=qoaeYMrXJH0 "Tutorial")
 
+<br>
+
+Discuss the SDK on [Discord](https://discord.gg/RqSS2NQVsY)
+
 </div>
+
 
 ```go
 package main
@@ -27,10 +32,11 @@ import (
 )
 
 func main() {
-    // Create MCP server
+    // Create a new MCP server
     s := server.NewMCPServer(
         "Demo 🚀",
         "1.0.0",
+        server.WithToolCapabilities(false),
     )
 
     // Add tool
@@ -52,9 +58,9 @@ func main() {
 }
 
 func helloHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-    name, ok := request.Params.Arguments["name"].(string)
-    if !ok {
-        return nil, errors.New("name must be a string")
+    name, err := request.RequireString("name")
+    if err != nil {
+        return mcp.NewToolResultError(err.Error()), nil
     }
 
     return mcp.NewToolResultText(fmt.Sprintf("Hello, %s!", name)), nil
@@ -87,11 +93,16 @@ MCP Go handles all the complex protocol details and server management, so you ca
   - [Tools](#tools)
   - [Prompts](#prompts)
 - [Examples](#examples)
-- [Contributing](#contributing)
-  - [Prerequisites](#prerequisites)
-  - [Installation](#installation-1)
-  - [Testing](#testing)
-  - [Opening a Pull Request](#opening-a-pull-request)
+- [Extras](#extras)
+  - [Transports](#transports)
+  - [Session Management](#session-management)
+    - [Basic Session Handling](#basic-session-handling)
+    - [Per-Session Tools](#per-session-tools)
+    - [Tool Filtering](#tool-filtering)
+    - [Working with Context](#working-with-context)
+  - [Request Hooks](#request-hooks)
+  - [Tool Handler Middleware](#tool-handler-middleware)
+  - [Regenerating Server Code](#regenerating-server-code)
 
 ## Installation
 
@@ -108,7 +119,6 @@ package main
 
 import (
     "context"
-    "errors"
     "fmt"
 
     "github.com/mark3labs/mcp-go/mcp"
@@ -120,8 +130,8 @@ func main() {
     s := server.NewMCPServer(
         "Calculator Demo",
         "1.0.0",
-        server.WithResourceCapabilities(true, true),
-        server.WithLogging(),
+        server.WithToolCapabilities(false),
+        server.WithRecovery(),
     )
 
     // Add a calculator tool
@@ -144,9 +154,21 @@ func main() {
 
     // Add the calculator handler
     s.AddTool(calculatorTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-        op := request.Params.Arguments["operation"].(string)
-        x := request.Params.Arguments["x"].(float64)
-        y := request.Params.Arguments["y"].(float64)
+        // Using helper functions for type-safe argument access
+        op, err := request.RequireString("operation")
+        if err != nil {
+            return mcp.NewToolResultError(err.Error()), nil
+        }
+        
+        x, err := request.RequireFloat("x")
+        if err != nil {
+            return mcp.NewToolResultError(err.Error()), nil
+        }
+        
+        y, err := request.RequireFloat("y")
+        if err != nil {
+            return mcp.NewToolResultError(err.Error()), nil
+        }
 
         var result float64
         switch op {
@@ -158,7 +180,7 @@ func main() {
             result = x * y
         case "divide":
             if y == 0 {
-                return nil, errors.New("Cannot divide by zero")
+                return mcp.NewToolResultError("cannot divide by zero"), nil
             }
             result = x / y
         }
@@ -172,6 +194,7 @@ func main() {
     }
 }
 ```
+
 ## What is MCP?
 
 The [Model Context Protocol (MCP)](https://modelcontextprotocol.io) lets you build servers that expose data and functionality to LLM applications in a secure, standardized way. Think of it like a web API, but specifically designed for LLM interactions. MCP servers can:
@@ -306,9 +329,10 @@ calculatorTool := mcp.NewTool("calculate",
 )
 
 s.AddTool(calculatorTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-    op := request.Params.Arguments["operation"].(string)
-    x := request.Params.Arguments["x"].(float64)
-    y := request.Params.Arguments["y"].(float64)
+    args := request.GetArguments()
+    op := args["operation"].(string)
+    x := args["x"].(float64)
+    y := args["y"].(float64)
 
     var result float64
     switch op {
@@ -320,7 +344,7 @@ s.AddTool(calculatorTool, func(ctx context.Context, request mcp.CallToolRequest)
         result = x * y
     case "divide":
         if y == 0 {
-            return nil, errors.New("Division by zero is not allowed")
+            return mcp.NewToolResultError("cannot divide by zero"), nil
         }
         result = x / y
     }
@@ -349,10 +373,11 @@ httpTool := mcp.NewTool("http_request",
 )
 
 s.AddTool(httpTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-    method := request.Params.Arguments["method"].(string)
-    url := request.Params.Arguments["url"].(string)
+    args := request.GetArguments()
+    method := args["method"].(string)
+    url := args["url"].(string)
     body := ""
-    if b, ok := request.Params.Arguments["body"].(string); ok {
+    if b, ok := args["body"].(string); ok {
         body = b
     }
 
@@ -365,20 +390,20 @@ s.AddTool(httpTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp
         req, err = http.NewRequest(method, url, nil)
     }
     if err != nil {
-        return nil, fmt.Errorf("Failed to create request: %v", err)
+        return mcp.NewToolResultErrorFromErr("unable to create request", err), nil
     }
 
     client := &http.Client{}
     resp, err := client.Do(req)
     if err != nil {
-        return nil, fmt.Errorf("Request failed: %v", err)
+        return mcp.NewToolResultErrorFromErr("unable to execute request", err), nil
     }
     defer resp.Body.Close()
 
     // Return response
     respBody, err := io.ReadAll(resp.Body)
     if err != nil {
-        return nil, fmt.Errorf("Failed to read response: %v", err)
+        return mcp.NewToolResultErrorFromErr("unable to read request response", err), nil
     }
 
     return mcp.NewToolResultText(fmt.Sprintf("Status: %d\nBody: %s", resp.StatusCode, string(respBody))), nil
@@ -449,8 +474,8 @@ s.AddPrompt(mcp.NewPrompt("code_review",
         "Code review assistance",
         []mcp.PromptMessage{
             mcp.NewPromptMessage(
-                mcp.RoleSystem,
-                mcp.NewTextContent("You are a helpful code reviewer. Review the changes and provide constructive feedback."),
+                mcp.RoleUser,
+                mcp.NewTextContent("Review the changes and provide constructive feedback."),
             ),
             mcp.NewPromptMessage(
                 mcp.RoleAssistant,
@@ -480,11 +505,11 @@ s.AddPrompt(mcp.NewPrompt("query_builder",
         "SQL query builder assistance",
         []mcp.PromptMessage{
             mcp.NewPromptMessage(
-                mcp.RoleSystem,
-                mcp.NewTextContent("You are a SQL expert. Help construct efficient and safe queries."),
+                mcp.RoleUser,
+                mcp.NewTextContent("Help construct efficient and safe queries for the provided schema."),
             ),
             mcp.NewPromptMessage(
-                mcp.RoleAssistant,
+                mcp.RoleUser,
                 mcp.NewEmbeddedResource(mcp.ResourceContents{
                     URI: fmt.Sprintf("db://schema/%s", tableName),
                     MIMEType: "application/json",
@@ -507,9 +532,221 @@ Prompts can include:
 
 ## Examples
 
-For examples, see the `examples/` directory.
+For examples, see the [`examples/`](examples/) directory.
 
 ## Extras
+
+### Transports
+
+MCP-Go supports stdio, SSE and streamable-HTTP transport layers.
+
+### Session Management
+
+MCP-Go provides a robust session management system that allows you to:
+- Maintain separate state for each connected client
+- Register and track client sessions
+- Send notifications to specific clients
+- Provide per-session tool customization
+
+<details>
+<summary>Show Session Management Examples</summary>
+
+#### Basic Session Handling
+
+```go
+// Create a server with session capabilities
+s := server.NewMCPServer(
+    "Session Demo",
+    "1.0.0",
+    server.WithToolCapabilities(true),
+)
+
+// Implement your own ClientSession
+type MySession struct {
+    id           string
+    notifChannel chan mcp.JSONRPCNotification
+    isInitialized bool
+    // Add custom fields for your application
+}
+
+// Implement the ClientSession interface
+func (s *MySession) SessionID() string {
+    return s.id
+}
+
+func (s *MySession) NotificationChannel() chan<- mcp.JSONRPCNotification {
+    return s.notifChannel
+}
+
+func (s *MySession) Initialize() {
+    s.isInitialized = true
+}
+
+func (s *MySession) Initialized() bool {
+    return s.isInitialized
+}
+
+// Register a session
+session := &MySession{
+    id:           "user-123",
+    notifChannel: make(chan mcp.JSONRPCNotification, 10),
+}
+if err := s.RegisterSession(context.Background(), session); err != nil {
+    log.Printf("Failed to register session: %v", err)
+}
+
+// Send notification to a specific client
+err := s.SendNotificationToSpecificClient(
+    session.SessionID(),
+    "notification/update",
+    map[string]any{"message": "New data available!"},
+)
+if err != nil {
+    log.Printf("Failed to send notification: %v", err)
+}
+
+// Unregister session when done
+s.UnregisterSession(context.Background(), session.SessionID())
+```
+
+#### Per-Session Tools
+
+For more advanced use cases, you can implement the `SessionWithTools` interface to support per-session tool customization:
+
+```go
+// Implement SessionWithTools interface for per-session tools
+type MyAdvancedSession struct {
+    MySession  // Embed the basic session
+    sessionTools map[string]server.ServerTool
+}
+
+// Implement additional methods for SessionWithTools
+func (s *MyAdvancedSession) GetSessionTools() map[string]server.ServerTool {
+    return s.sessionTools
+}
+
+func (s *MyAdvancedSession) SetSessionTools(tools map[string]server.ServerTool) {
+    s.sessionTools = tools
+}
+
+// Create and register a session with tools support
+advSession := &MyAdvancedSession{
+    MySession: MySession{
+        id:           "user-456",
+        notifChannel: make(chan mcp.JSONRPCNotification, 10),
+    },
+    sessionTools: make(map[string]server.ServerTool),
+}
+if err := s.RegisterSession(context.Background(), advSession); err != nil {
+    log.Printf("Failed to register session: %v", err)
+}
+
+// Add session-specific tools
+userSpecificTool := mcp.NewTool(
+    "user_data",
+    mcp.WithDescription("Access user-specific data"),
+)
+// You can use AddSessionTool (similar to AddTool)
+err := s.AddSessionTool(
+    advSession.SessionID(),
+    userSpecificTool,
+    func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+        // This handler is only available to this specific session
+        return mcp.NewToolResultText("User-specific data for " + advSession.SessionID()), nil
+    },
+)
+if err != nil {
+    log.Printf("Failed to add session tool: %v", err)
+}
+
+// Or use AddSessionTools directly with ServerTool
+/*
+err := s.AddSessionTools(
+    advSession.SessionID(),
+    server.ServerTool{
+        Tool: userSpecificTool,
+        Handler: func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+            // This handler is only available to this specific session
+            return mcp.NewToolResultText("User-specific data for " + advSession.SessionID()), nil
+        },
+    },
+)
+if err != nil {
+    log.Printf("Failed to add session tool: %v", err)
+}
+*/
+
+// Delete session-specific tools when no longer needed
+err = s.DeleteSessionTools(advSession.SessionID(), "user_data")
+if err != nil {
+    log.Printf("Failed to delete session tool: %v", err)
+}
+```
+
+#### Tool Filtering
+
+You can also apply filters to control which tools are available to certain sessions:
+
+```go
+// Add a tool filter that only shows tools with certain prefixes
+s := server.NewMCPServer(
+    "Tool Filtering Demo",
+    "1.0.0",
+    server.WithToolCapabilities(true),
+    server.WithToolFilter(func(ctx context.Context, tools []mcp.Tool) []mcp.Tool {
+        // Get session from context
+        session := server.ClientSessionFromContext(ctx)
+        if session == nil {
+            return tools // Return all tools if no session
+        }
+        
+        // Example: filter tools based on session ID prefix
+        if strings.HasPrefix(session.SessionID(), "admin-") {
+            // Admin users get all tools
+            return tools
+        } else {
+            // Regular users only get tools with "public-" prefix
+            var filteredTools []mcp.Tool
+            for _, tool := range tools {
+                if strings.HasPrefix(tool.Name, "public-") {
+                    filteredTools = append(filteredTools, tool)
+                }
+            }
+            return filteredTools
+        }
+    }),
+)
+```
+
+#### Working with Context
+
+The session context is automatically passed to tool and resource handlers:
+
+```go
+s.AddTool(mcp.NewTool("session_aware"), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+    // Get the current session from context
+    session := server.ClientSessionFromContext(ctx)
+    if session == nil {
+        return mcp.NewToolResultError("No active session"), nil
+    }
+    
+    return mcp.NewToolResultText("Hello, session " + session.SessionID()), nil
+})
+
+// When using handlers in HTTP/SSE servers, you need to pass the context with the session
+httpHandler := func(w http.ResponseWriter, r *http.Request) {
+    // Get session from somewhere (like a cookie or header)
+    session := getSessionFromRequest(r)
+    
+    // Add session to context
+    ctx := s.WithContext(r.Context(), session)
+    
+    // Use this context when handling requests
+    // ...
+}
+```
+
+</details>
 
 ### Request Hooks
 
@@ -522,57 +759,20 @@ initialization.
 Add the `Hooks` to the server at the time of creation using the
 `server.WithHooks` option.
 
-## Contributing
+### Tool Handler Middleware
 
-<details>
+Add middleware to tool call handlers using the `server.WithToolHandlerMiddleware` option. Middlewares can be registered on server creation and are applied on every tool call.
 
-<summary><h3>Open Developer Guide</h3></summary>
+A recovery middleware option is available to recover from panics in a tool call and can be added to the server with the `server.WithRecovery` option.
 
-### Prerequisites
+### Regenerating Server Code
 
-Go version >= 1.23
-
-### Installation
-
-Create a fork of this repository, then clone it:
+Server hooks and request handlers are generated. Regenerate them by running:
 
 ```bash
-git clone https://github.com/mark3labs/mcp-go.git
-cd mcp-go
+go generate ./...
 ```
 
-### Testing
+You need `go` installed and the `goimports` tool available. The generator runs
+`goimports` automatically to format and fix imports.
 
-Please make sure to test any new functionality. Your tests should be simple and atomic and anticipate change rather than cement complex patterns.
-
-Run tests from the root directory:
-
-```bash
-go test -v './...'
-```
-
-### Opening a Pull Request
-
-Fork the repository and create a new branch:
-
-```bash
-git checkout -b my-branch
-```
-
-Make your changes and commit them:
-
-
-```bash
-git add . && git commit -m "My changes"
-```
-
-Push your changes to your fork:
-
-
-```bash
-git push origin my-branch
-```
-
-Feel free to reach out in a GitHub issue or discussion if you have any questions!
-
-</details>
