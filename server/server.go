@@ -352,25 +352,12 @@ func (s *MCPServer) RemoveResource(uri string) {
 	if exists {
 		delete(s.resources, uri)
 	}
-	s.mu.Lock()
-	s.resources[resource.URI] = resourceEntry{
-		resource: resource,
-		handler:  handler,
 	s.resourcesMu.Unlock()
 
 	// Send notification to all initialized sessions if listChanged capability is enabled and we actually remove a resource
 	if exists && s.capabilities.resources != nil && s.capabilities.resources.listChanged {
 		s.SendNotificationToAllClients(mcp.MethodNotificationResourcesListChanged, nil)
 	}
-	s.mu.Unlock()
-
-	// Send notification to all initialized sessions
-	s.sendNotificationToAllClients("notifications/resources/list_changed", map[string]interface{}{
-		"uri":         resource.URI,
-		"name":        resource.Name,
-		"description": resource.Description,
-		"mimeType":    resource.MIMEType,
-	})
 }
 
 // AddResourceTemplate registers a new resource template and its handler
