@@ -7,6 +7,25 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
+// NewStdioMCPClientWithTransport creates a new stdio-based MCP client using the transport abstraction.
+// This is a convenience function for backward compatibility.
+func NewStdioMCPClientWithTransport(command string, env []string, args ...string) (MCPClient, error) {
+	config := TransportConfig{
+		Command: command,
+		Args:    args,
+		Env:     env,
+	}
+	return NewMCPClient("stdio", config)
+}
+
+// NewMemoryMCPClient creates a new in-memory MCP client using the transport abstraction.
+func NewMemoryMCPClient(server interface{}) (MCPClient, error) {
+	config := TransportConfig{
+		Server: server,
+	}
+	return NewMCPClient("memory", config)
+}
+
 // MCPClient represents an MCP client interface
 type MCPClient interface {
 	// Initialize sends the initial connection request to the server
