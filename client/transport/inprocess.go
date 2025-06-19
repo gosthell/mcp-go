@@ -65,6 +65,14 @@ func (c *InProcessTransport) SetNotificationHandler(handler func(notification mc
 	c.onNotification = handler
 }
 
+func (c *InProcessTransport) OnNotification(notification mcp.JSONRPCNotification) {
+	c.notifyMu.RLock()
+	defer c.notifyMu.RUnlock()
+	if c.onNotification != nil {
+		c.onNotification(notification)
+	}
+}
+
 func (*InProcessTransport) Close() error {
 	return nil
 }
