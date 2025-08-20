@@ -406,13 +406,6 @@ func (c *StreamableHTTP) handleSSEResponse(ctx context.Context, reader io.ReadCl
 	// Create a channel for this specific request
 	responseChan := make(chan *JSONRPCResponse, 1)
 
-	// Add timeout context for request processing if not already set
-	if deadline, ok := ctx.Deadline(); !ok || time.Until(deadline) > 30*time.Second {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, 30*time.Second)
-		defer cancel()
-	}
-
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -602,10 +595,10 @@ func (c *StreamableHTTP) listenForever(ctx context.Context) {
 	c.logger.Infof("listening to server forever")
 	for {
 		// Add timeout for individual connection attempts
-		connectCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		connectCtx, cancel := context.WithCancel(ctx)
 		err := c.createGETConnectionToServer(connectCtx)
 		cancel()
-		
+
 		if errors.Is(err, ErrGetMethodNotAllowed) {
 			// server does not support listening
 			c.logger.Errorf("server does not support listening")
@@ -621,7 +614,7 @@ func (c *StreamableHTTP) listenForever(ctx context.Context) {
 		if err != nil {
 			c.logger.Errorf("failed to listen to server. retry in 1 second: %v", err)
 		}
-		
+
 		// Use context-aware sleep
 		select {
 		case <-time.After(retryInterval):
@@ -704,15 +697,15 @@ func (c *StreamableHTTP) handleIncomingRequest(ctx context.Context, request JSON
 		// Create a new context with timeout for request handling, respecting parent context
 		requestCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
-		
+
 		response, err := handler(requestCtx, request)
 		if err != nil {
 			c.logger.Errorf("error handling request %s: %v", request.Method, err)
-			
+
 			// Determine appropriate JSON-RPC error code based on error type
 			var errorCode int
 			var errorMessage string
-			
+
 			// Check for specific sampling-related errors
 			if errors.Is(err, context.Canceled) {
 				errorCode = -32800 // Request cancelled
@@ -731,7 +724,7 @@ func (c *StreamableHTTP) handleIncomingRequest(ctx context.Context, request JSON
 					errorMessage = err.Error()
 				}
 			}
-			
+
 			// Send error response
 			errorResponse := &JSONRPCResponse{
 				JSONRPC: "2.0",
