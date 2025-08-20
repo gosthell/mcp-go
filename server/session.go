@@ -107,6 +107,17 @@ func (s *MCPServer) RegisterSession(
 	return nil
 }
 
+// GetSession returns the session by its ID.
+func (s *MCPServer) GetSession(
+	sessionID string,
+) (ClientSession, error) {
+	sessionValue, ok := s.sessions.Load(sessionID)
+	if !ok {
+		return nil, ErrSessionNotFound
+	}
+	return sessionValue.(ClientSession), nil
+}
+
 func (s *MCPServer) buildLogNotification(notification mcp.LoggingMessageNotification) mcp.JSONRPCNotification {
 	return mcp.JSONRPCNotification{
 		JSONRPC: mcp.JSONRPC_VERSION,
