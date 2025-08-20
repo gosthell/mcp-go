@@ -575,11 +575,11 @@ func (c *Client) handleElicitationRequestTransport(ctx context.Context, request 
 }
 
 func (c *Client) handlePingRequestTransport(ctx context.Context, request transport.JSONRPCRequest) (*transport.JSONRPCResponse, error) {
-	//var result *mcp.EmptyResult
+	b, _ := json.Marshal(&mcp.EmptyResult{})
 	return &transport.JSONRPCResponse{
 		JSONRPC: mcp.JSONRPC_VERSION,
-		ID:      mcp.NewRequestId(request.ID),
-		Result:  nil,
+		ID:      request.ID,
+		Result:  b,
 	}, nil
 }
 
