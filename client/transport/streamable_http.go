@@ -406,6 +406,13 @@ func (c *StreamableHTTP) handleSSEResponse(ctx context.Context, reader io.ReadCl
 	// Create a channel for this specific request
 	responseChan := make(chan *JSONRPCResponse, 1)
 
+	// Add timeout context for request processing if not already set
+	if deadline, ok := ctx.Deadline(); !ok || time.Until(deadline) > 30*time.Second {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+	}
+
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -595,7 +602,7 @@ func (c *StreamableHTTP) listenForever(ctx context.Context) {
 	c.logger.Infof("listening to server forever")
 	for {
 		// Add timeout for individual connection attempts
-		connectCtx, cancel := context.WithCancel(ctx)
+		connectCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		err := c.createGETConnectionToServer(connectCtx)
 		cancel()
 
