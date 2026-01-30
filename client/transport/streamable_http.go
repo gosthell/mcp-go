@@ -728,6 +728,14 @@ func (c *StreamableHTTP) handleIncomingRequest(ctx context.Context, request JSON
 		defer cancel()
 
 		response, err := handler(requestCtx, request)
+
+		// Use parent context for sending response, not the potentially expired requestCtx.
+		// The handler may have consumed most/all of the 30s timeout (e.g., waiting for
+		// user input during elicitation), leaving insufficient time to send the response.
+		// Using a fresh context ensures the response can be delivered to the server.
+		responseCtx, responseCancel := context.WithTimeout(ctx, 10*time.Second)
+		defer responseCancel()
+
 		if err != nil {
 			c.logger.Errorf("error handling request %s: %v", request.Method, err)
 
@@ -754,14 +762,14 @@ func (c *StreamableHTTP) handleIncomingRequest(ctx context.Context, request JSON
 				}
 			}
 
-			// Send error response
+			// Send error response with fresh context
 			errorResponse := NewJSONRPCErrorResponse(request.ID, errorCode, errorMessage, nil)
-			c.sendResponseToServer(requestCtx, errorResponse)
+			c.sendResponseToServer(responseCtx, errorResponse)
 			return
 		}
 
 		if response != nil {
-			c.sendResponseToServer(requestCtx, response)
+			c.sendResponseToServer(responseCtx, response)
 		}
 	}()
 }
