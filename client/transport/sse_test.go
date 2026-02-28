@@ -1100,6 +1100,20 @@ func TestSSEHostOverride(t *testing.T) {
 
 		require.Equal(t, "", sse.host)
 	})
+
+	t.Run("WithResponseTimeout function", func(t *testing.T) {
+		sse := &SSE{responseTimeout: 60 * time.Second}
+
+		option := WithResponseTimeout(15 * time.Second)
+		option(sse)
+
+		require.Equal(t, 15*time.Second, sse.responseTimeout)
+
+		option = WithResponseTimeout(0)
+		option(sse)
+
+		require.Zero(t, sse.responseTimeout)
+	})
 }
 
 func TestSSE_SendRequest_Timeout(t *testing.T) {
@@ -1203,6 +1217,102 @@ func TestSSE_SendRequest_Timeout(t *testing.T) {
 			strings.Contains(errMsg, "timeout") || strings.Contains(errMsg, "deadline exceeded"),
 			"Error should mention timeout or deadline, got: %v", err)
 		require.LessOrEqual(t, duration, 1500*time.Millisecond, "Should respect context deadline of 1s")
+	})
+
+	t.Run("ConfiguredResponseTimeoutTakesPrecedence", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Header.Get("Accept") == "text/event-stream" {
+				w.Header().Set("Content-Type", "text/event-stream")
+				w.WriteHeader(http.StatusOK)
+				flusher, _ := w.(http.Flusher)
+				fmt.Fprintf(w, "event: endpoint\ndata: /message\n\n")
+				flusher.Flush()
+				<-r.Context().Done()
+				return
+			}
+
+			if r.Method == http.MethodPost {
+				w.WriteHeader(http.StatusAccepted)
+				return
+			}
+		}))
+		defer server.Close()
+
+		transport, err := NewSSE(server.URL, WithResponseTimeout(150*time.Millisecond))
+		require.NoError(t, err)
+		defer transport.Close()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		err = transport.Start(ctx)
+		require.NoError(t, err)
+
+		requestCtx, requestCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer requestCancel()
+
+		request := JSONRPCRequest{
+			JSONRPC: "2.0",
+			ID:      mcp.NewRequestId(int64(1)),
+			Method:  "test/timeout",
+		}
+
+		startTime := time.Now()
+		_, err = transport.SendRequest(requestCtx, request)
+		duration := time.Since(startTime)
+
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "timeout waiting for SSE response after 150ms")
+		require.GreaterOrEqual(t, duration, 100*time.Millisecond)
+		require.LessOrEqual(t, duration, 500*time.Millisecond)
+	})
+
+	t.Run("DisabledResponseTimeoutUsesContextDeadline", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Header.Get("Accept") == "text/event-stream" {
+				w.Header().Set("Content-Type", "text/event-stream")
+				w.WriteHeader(http.StatusOK)
+				flusher, _ := w.(http.Flusher)
+				fmt.Fprintf(w, "event: endpoint\ndata: /message\n\n")
+				flusher.Flush()
+				<-r.Context().Done()
+				return
+			}
+
+			if r.Method == http.MethodPost {
+				w.WriteHeader(http.StatusAccepted)
+				return
+			}
+		}))
+		defer server.Close()
+
+		transport, err := NewSSE(server.URL, WithResponseTimeout(0))
+		require.NoError(t, err)
+		defer transport.Close()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		err = transport.Start(ctx)
+		require.NoError(t, err)
+
+		requestCtx, requestCancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+		defer requestCancel()
+
+		request := JSONRPCRequest{
+			JSONRPC: "2.0",
+			ID:      mcp.NewRequestId(int64(2)),
+			Method:  "test/context-timeout",
+		}
+
+		startTime := time.Now()
+		_, err = transport.SendRequest(requestCtx, request)
+		duration := time.Since(startTime)
+
+		require.Error(t, err)
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+		require.GreaterOrEqual(t, duration, 150*time.Millisecond)
+		require.LessOrEqual(t, duration, 500*time.Millisecond)
 	})
 
 	t.Run("TimeoutCleansUpResponseChannel", func(t *testing.T) {

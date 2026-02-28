@@ -509,6 +509,7 @@ func createCustomSSEClient() {
     // Create SSE client with custom options
     c, err := client.NewSSEMCPClient("http://localhost:8080/mcp/sse",
         transport.WithSSELogger(logger),
+        transport.WithResponseTimeout(2*time.Minute),
         transport.WithHeaders(map[string]string{
             "Authorization": "Bearer your-token",
             "User-Agent":    "MyApp/1.0",

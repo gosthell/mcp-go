@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"time"
 
 	"github.com/mark3labs/mcp-go/client/transport"
 )
@@ -18,6 +19,12 @@ func WithHeaderFunc(headerFunc transport.HTTPHeaderFunc) transport.ClientOption 
 
 func WithHTTPClient(httpClient *http.Client) transport.ClientOption {
 	return transport.WithHTTPClient(httpClient)
+}
+
+// WithResponseTimeout sets how long the SSE transport waits for a response event.
+// A non-positive duration disables the transport-level timeout and leaves timing control to the request context.
+func WithResponseTimeout(timeout time.Duration) transport.ClientOption {
+	return transport.WithResponseTimeout(timeout)
 }
 
 // WithHTTPHost sets a custom Host header for the SSE client, enabling manual DNS resolution.

@@ -24,18 +24,19 @@ import (
 // while sending requests over regular HTTP POST calls. The client handles
 // automatic reconnection and message routing between requests and responses.
 type SSE struct {
-	baseURL        *url.URL
-	endpoint       *url.URL
-	httpClient     *http.Client
-	responses      map[string]chan *JSONRPCResponse
-	mu             sync.RWMutex
-	onNotification func(mcp.JSONRPCNotification)
-	notifyMu       sync.RWMutex
-	endpointChan   chan struct{}
-	headers        map[string]string
-	headerFunc     HTTPHeaderFunc
-	host           string
-	logger         util.Logger
+	baseURL         *url.URL
+	endpoint        *url.URL
+	httpClient      *http.Client
+	responseTimeout time.Duration
+	responses       map[string]chan *JSONRPCResponse
+	mu              sync.RWMutex
+	onNotification  func(mcp.JSONRPCNotification)
+	notifyMu        sync.RWMutex
+	endpointChan    chan struct{}
+	headers         map[string]string
+	headerFunc      HTTPHeaderFunc
+	host            string
+	logger          util.Logger
 
 	started          atomic.Bool
 	closed           atomic.Bool
@@ -75,6 +76,14 @@ func WithHTTPClient(httpClient *http.Client) ClientOption {
 	}
 }
 
+// WithResponseTimeout sets how long SendRequest waits for a response event on the SSE stream.
+// A non-positive duration disables the transport-level timeout and leaves timing control to the request context.
+func WithResponseTimeout(timeout time.Duration) ClientOption {
+	return func(sc *SSE) {
+		sc.responseTimeout = timeout
+	}
+}
+
 func WithOAuth(config OAuthConfig) ClientOption {
 	return func(sc *SSE) {
 		sc.oauthHandler = NewOAuthHandler(config)
@@ -99,12 +108,13 @@ func NewSSE(baseURL string, options ...ClientOption) (*SSE, error) {
 	}
 
 	smc := &SSE{
-		baseURL:      parsedURL,
-		httpClient:   &http.Client{},
-		responses:    make(map[string]chan *JSONRPCResponse),
-		endpointChan: make(chan struct{}),
-		headers:      make(map[string]string),
-		logger:       util.DefaultLogger(),
+		baseURL:         parsedURL,
+		httpClient:      &http.Client{},
+		responseTimeout: 60 * time.Second,
+		responses:       make(map[string]chan *JSONRPCResponse),
+		endpointChan:    make(chan struct{}),
+		headers:         make(map[string]string),
+		logger:          util.DefaultLogger(),
 	}
 
 	for _, opt := range options {
@@ -468,7 +478,7 @@ func (c *SSE) SendRequest(
 	}
 
 	// Calculate response timeout
-	responseTimeout := 60 * time.Second
+	responseTimeout := c.responseTimeout
 	if deadline, ok := ctx.Deadline(); ok {
 		remaining := time.Until(deadline)
 		// Check if context deadline has already passed
@@ -476,9 +486,22 @@ func (c *SSE) SendRequest(
 			deleteResponseChan()
 			return nil, ctx.Err()
 		}
-		// Use the shorter of remaining time or default timeout
-		if remaining < responseTimeout {
+		// Use the shorter of remaining time or the configured timeout when one is set.
+		if responseTimeout > 0 && remaining < responseTimeout {
 			responseTimeout = remaining
+		}
+	}
+
+	if responseTimeout <= 0 {
+		select {
+		case <-ctx.Done():
+			deleteResponseChan()
+			return nil, ctx.Err()
+		case response, ok := <-responseChan:
+			if ok {
+				return response, nil
+			}
+			return nil, fmt.Errorf("connection has been closed")
 		}
 	}
 
