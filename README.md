@@ -310,6 +310,113 @@ The examples are simple but demonstrate the core concepts. Resources can be much
 
 Tools let LLMs take actions through your server. Unlike resources, tools are expected to perform computation and have side effects. They're similar to POST endpoints in a REST API.
 
+#### Task-Augmented Tools
+
+Task-augmented tools execute asynchronously and return results via polling. This is useful for long-running operations that would otherwise block or time out. Task tools support three modes:
+
+- **TaskSupportForbidden** (default): The tool cannot be invoked as a task
+- **TaskSupportOptional**: The tool can be invoked as a task or synchronously
+- **TaskSupportRequired**: The tool must be invoked as a task
+
+```go
+// Example: A tool that requires task execution
+processBatchTool := mcp.NewTool("process_batch",
+    mcp.WithDescription("Process a batch of items asynchronously"),
+    mcp.WithTaskSupport(mcp.TaskSupportRequired),
+    mcp.WithArray("items",
+        mcp.Description("Array of items to process"),
+        mcp.WithStringItems(),
+        mcp.Required(),
+    ),
+)
+
+// Task tool handler returns CreateTaskResult instead of CallToolResult
+s.AddTaskTool(processBatchTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+    items := request.GetStringSlice("items", []string{})
+    
+    // Long-running work here
+    for i, item := range items {
+        select {
+        case <-ctx.Done():
+            // Task was cancelled
+            return nil, ctx.Err()
+        default:
+            // Process item...
+            processItem(item)
+        }
+    }
+    
+    // Return result - task ID and metadata are managed by the server
+    return &mcp.CreateTaskResult{
+        Task: mcp.Task{
+            // Task fields (ID, status, etc.) are populated by the server
+        },
+    }, nil
+})
+
+// Enable task capabilities when creating the server
+s := server.NewMCPServer(
+    "Task Server",
+    "1.0.0",
+    server.WithTaskCapabilities(
+        true, // listTasks: allows clients to list all tasks
+        true, // cancel: allows clients to cancel running tasks
+        true, // toolCallTasks: enables task augmentation for tools
+    ),
+    server.WithMaxConcurrentTasks(10), // Optional: limit concurrent running tasks
+)
+```
+
+Task execution flow:
+1. Client calls tool with task parameter
+2. Server immediately returns task ID
+3. Tool executes asynchronously in the background
+4. Client polls `tasks/result` to retrieve the result
+5. Server sends task status notifications on completion
+
+For optional task tools, the same tool can be called synchronously (without task parameter) or asynchronously (with task parameter):
+
+```go
+// Tool with optional task support
+analyzeTool := mcp.NewTool("analyze_data",
+    mcp.WithDescription("Analyze data - can run sync or async"),
+    mcp.WithTaskSupport(mcp.TaskSupportOptional),
+    mcp.WithString("data", mcp.Required()),
+)
+
+// Use AddTaskTool for hybrid tools that support both modes
+s.AddTaskTool(analyzeTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+    // This handler runs when called as a task
+    data := request.GetString("data", "")
+    result := analyzeData(data)
+    
+    return &mcp.CreateTaskResult{
+        Task: mcp.Task{},
+    }, nil
+})
+
+// The server automatically handles both sync and async invocations
+// When called without task param: executes handler and returns immediately
+// When called with task param: executes handler asynchronously
+```
+
+##### Limiting Concurrent Tasks
+
+To prevent resource exhaustion, you can limit the number of concurrent running tasks:
+
+```go
+s := server.NewMCPServer(
+    "Task Server",
+    "1.0.0",
+    server.WithTaskCapabilities(true, true, true),
+    server.WithMaxConcurrentTasks(10), // Allow up to 10 concurrent running tasks
+)
+```
+
+When the limit is reached, new task creation requests will fail with an error. Completed, failed, or cancelled tasks don't count toward the limit - only tasks in "working" status. If `WithMaxConcurrentTasks` is not specified or set to 0, there is no limit on concurrent tasks.
+
+For traditional synchronous tools that execute and return results immediately:
+
 Simple calculation example:
 ```go
 calculatorTool := mcp.NewTool("calculate",
@@ -535,11 +642,15 @@ Prompts can include:
 
 For examples, see the [`examples/`](examples/) directory.
 
+Key examples include:
+- [`examples/task_tool/`](examples/task_tool/) - Demonstrates task-augmented tools with TaskSupportRequired and TaskSupportOptional modes
+- Additional examples covering resources, prompts, and more in the examples directory
+
 ## Extras
 
 ### Transports
 
-MCP-Go supports stdio, SSE and streamable-HTTP transport layers. For SSE transport, you can use `SetConnectionLostHandler()` to detect and handle HTTP/2 idle timeout disconnections (NO_ERROR) for implementing reconnection logic.
+MCP-Go supports stdio, SSE and streamable-HTTP transport layers. For SSE transport, you can use `SetConnectionLostHandler()` to detect and handle disconnections for implementing reconnection logic.
 
 ### Session Management
 

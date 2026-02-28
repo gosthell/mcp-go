@@ -67,19 +67,19 @@ const (
 	MethodListRoots MCPMethod = "roots/list"
 
 	// MethodTasksGet retrieves the current status of a task.
-	// https://modelcontextprotocol.io/specification/draft/basic/utilities/tasks
+	// https://modelcontextprotocol.io/specification/2025-11-25/basic/utilities/tasks
 	MethodTasksGet MCPMethod = "tasks/get"
 
 	// MethodTasksList lists all tasks for the current session.
-	// https://modelcontextprotocol.io/specification/draft/basic/utilities/tasks
+	// https://modelcontextprotocol.io/specification/2025-11-25/basic/utilities/tasks
 	MethodTasksList MCPMethod = "tasks/list"
 
 	// MethodTasksResult retrieves the result of a completed task.
-	// https://modelcontextprotocol.io/specification/draft/basic/utilities/tasks
+	// https://modelcontextprotocol.io/specification/2025-11-25/basic/utilities/tasks
 	MethodTasksResult MCPMethod = "tasks/result"
 
 	// MethodTasksCancel cancels an in-progress task.
-	// https://modelcontextprotocol.io/specification/draft/basic/utilities/tasks
+	// https://modelcontextprotocol.io/specification/2025-11-25/basic/utilities/tasks
 	MethodTasksCancel MCPMethod = "tasks/cancel"
 
 	// MethodNotificationResourcesListChanged notifies when the list of available resources changes.
@@ -101,7 +101,7 @@ const (
 	MethodNotificationRootsListChanged = "notifications/roots/list_changed"
 
 	// MethodNotificationTasksStatus notifies when a task's status changes.
-	// https://modelcontextprotocol.io/specification/draft/basic/utilities/tasks
+	// https://modelcontextprotocol.io/specification/2025-11-25/basic/utilities/tasks
 	MethodNotificationTasksStatus = "notifications/tasks/status"
 
 	// MethodCompletionComplete returns completion suggestions for a given argument
@@ -1381,6 +1381,9 @@ const (
 	// TaskStatusWorking indicates the request is currently being processed.
 	TaskStatusWorking TaskStatus = "working"
 	// TaskStatusInputRequired indicates the receiver needs input from the requestor.
+	// NOTE: This status is defined by the spec but not yet implemented in this SDK.
+	// The input_required flow requires integration with elicitation which is planned
+	// for a future release.
 	TaskStatusInputRequired TaskStatus = "input_required"
 	// TaskStatusCompleted indicates the request completed successfully.
 	TaskStatusCompleted TaskStatus = "completed"
@@ -1405,11 +1408,18 @@ type Task struct {
 	StatusMessage string `json:"statusMessage,omitempty"`
 	// ISO 8601 timestamp when the task was created.
 	CreatedAt string `json:"createdAt"`
+	// ISO 8601 timestamp when the task was last updated.
+	LastUpdatedAt string `json:"lastUpdatedAt"`
 	// Time in milliseconds from creation before task may be deleted.
 	// If null, the task has no expiration.
 	TTL *int64 `json:"ttl"`
 	// Suggested time in milliseconds between status checks.
 	PollInterval *int64 `json:"pollInterval,omitempty"`
+}
+
+// GetName returns the task ID, implementing the Named interface for pagination.
+func (t Task) GetName() string {
+	return t.TaskId
 }
 
 // TaskParams represents the task metadata included when augmenting a request.
@@ -1466,11 +1476,13 @@ type TaskResultParams struct {
 }
 
 // TaskResultResult contains the actual operation result.
-// The structure depends on the original request type.
+// For task-augmented tool calls, this embeds the CallToolResult fields.
 type TaskResultResult struct {
 	Result
-	// The actual result varies by request type (e.g., CallToolResult for tools/call).
-	// This will be handled by the specific implementation.
+	// Tool call result fields (for task-augmented tool calls)
+	Content           []Content `json:"content,omitempty"`
+	StructuredContent any       `json:"structuredContent,omitempty"`
+	IsError           bool      `json:"isError,omitempty"`
 }
 
 // CancelTaskRequest cancels an in-progress task.
