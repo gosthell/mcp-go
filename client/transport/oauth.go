@@ -21,6 +21,8 @@ var ErrNoToken = errors.New("no token available")
 type OAuthConfig struct {
 	// ClientID is the OAuth client ID
 	ClientID string
+	// ClientURI is the URI of the client
+	ClientURI string
 	// ClientSecret is the OAuth client secret (for confidential clients)
 	ClientSecret string
 	// RedirectURI is the redirect URI for the OAuth flow
@@ -171,9 +173,10 @@ func (h *OAuthHandler) GetAuthorizationHeader(ctx context.Context) (string, erro
 		return "", err
 	}
 
-	// Some auth implementations are strict about token type
+	// Per RFC 6749 §5.1, token_type is case-insensitive.
+	// Normalize to "Bearer" for strict implementations.
 	tokenType := token.TokenType
-	if tokenType == "bearer" {
+	if strings.EqualFold(tokenType, "bearer") {
 		tokenType = "Bearer"
 	}
 
@@ -559,6 +562,10 @@ func (h *OAuthHandler) RegisterClient(ctx context.Context, clientName string) er
 		"grant_types":                []string{"authorization_code", "refresh_token"},
 		"response_types":             []string{"code"},
 		"scope":                      strings.Join(h.config.Scopes, " "),
+	}
+
+	if h.config.ClientURI != "" {
+		regRequest["client_uri"] = h.config.ClientURI
 	}
 
 	// Add client_secret if this is a confidential client
